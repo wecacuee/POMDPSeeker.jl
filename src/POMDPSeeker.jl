@@ -1,21 +1,36 @@
+__precompile__(false)
 module POMDPSeeker
 
+using Base
+using POMDPs: POMDP, POMDPs
+using Parameters: @with_kw
+using Distributions: MvNormal, Uniform
+using Random: AbstractRNG, GLOBAL_RNG
 
-using POMDPs
-using Parameters
-import Distributions: MvNormal
+Map = Array{Float64}
+Pose = Array{Float64}
+
+function pose2pixel(
+    map::Map,
+    pose::Pose;
+    origin_px::Array{Int64, 1} = round.(Int64, [size(map)...] / 2)
+)
+    pixelji = round.(Int64, pose[1:2])
+    return [pixelji[end], pixelji[1]] + origin_px
+end
+
 
 """
 Class describing the state of the system
 """
-struct State
-    map::Array{Float64}
-    pose::Array{Float64}
+@with_kw struct State
+    map::Map
+    pose::Pose
     tgts::Array{Float64}
     activated::Array{Bool}
 end
 
-struct NDBox
+@with_kw struct NDBox
     shape::Tuple{Int64, Vararg{Int64}}
     min::Array{Float64}
     max::Array{Float64}
@@ -25,7 +40,7 @@ end
 """
 Return a random map
 """
-rand(ms::NDBox) = rand(Uniform(-ms.min,ms.max), ms.shape)
+Base.rand(rng::AbstractRNG, ms::NDBox) = rand(rng, Uniform(ms.min[1],ms.max[1]), ms.shape)
 
 
 """
@@ -40,16 +55,16 @@ Dimensions of map space
 dimensions(ms::NDBox) = 2
 
 
-struct DiscreteSpace{T}
+@with_kw struct DiscreteSpace{T}
     shape::Tuple{Int64, Vararg{Int64}}
     values::Array{T}
 end
 
 
-rand(ds::DiscreteSpace{T}) where T = rand(ds.values, vs.shape)
+Base.rand(rng::AbstractRNG, ds::DiscreteSpace{T}) where T = rand(rng, ds.values, vs.shape)
 
 
-struct StateSpace
+@with_kw struct StateSpace
     mapspace::DiscreteSpace{Bool}
     posespace::NDBox
     tgtspace::NDBox
@@ -57,15 +72,17 @@ struct StateSpace
 end
 
 
-rand(ss::StateSpace) = State(map = rand(ss.mapspace),
-                             pose = rand(ss.posespace),
-                             tgts = rand(ss.tgtspace),
-                             activated = rand(ss.activationspace))
+Base.rand(rng::AbstractRNG, ss::StateSpace) = State(
+    map = rand(rng, ss.mapspace),
+    pose = rand(rng, ss.posespace),
+    tgts = rand(rng, ss.tgtspace),
+    activated = rand(rng, ss.activationspace))
 
 
 """
 Class describing the possible actions
 """
+ActionSpace = NDBox
 Action = Array{Float64}
 
 """
@@ -82,18 +99,20 @@ struct Observation
 end
 
 
-struct BeliefDistribution
+@with_kw struct BeliefDistribution
     occupancy::Array{Float64}
     pose::MvNormal
     tgts::Array{MvNormal}
     activated::Array{Bool}
 end
 
-rand(bd::BeliefDistribution) = State(
-    map=(rand(Float64, size(bd.occupancy)) .> bd.occupancy),
-    pose=rand(bd.pose),
-    tgts=rand(bd.tgts),
-    activations=rand(bd.activated))
+function Base.rand(rng::AbstractRNG, bd::BeliefDistribution)
+    return State(
+      map=(rand(rng, Float64, size(bd.occupancy)) .> bd.occupancy),
+      pose=rand(rng, bd.pose),
+      tgts=transpose(hcat([rand(rng, nd) for nd in bd.tgts]...)),
+      activated=bd.activated)
+end
 
 """
 Defining POMPD
@@ -101,7 +120,7 @@ Defining POMPD
 @with_kw struct SourceSeeker <: POMDP{State, Action, Observation}
     map_size::Tuple{Int64, Int64} = (4000, 4000)
     pose_size::Tuple{Int64} = (3,)
-    tgt_size::Tuple{Int64} = (1, 2)
+    tgt_size::Tuple{Int64, Int64} = (1, 2)
     state_particles::Int64 = 100
     action_particles::Int64 = 10
     max_velocity::Vector{Float64} = [0.5, 0.5, 0.5]
@@ -109,52 +128,69 @@ Defining POMPD
     max_pose::Vector{Float64} = [100, 100, π]
     nscans::Int64 = 180
     laser_range::Vector{Float64} = [0.05, 80]
-    state_space = StateSpace(
-        mapspace = DiscreteSpace{Bool}(map_size, [false, true]),
-        posespace = NDBox(pose_size, min_pose, max_pose),
-        tgtspace = NDBox(tgt_size, min_pose, max_pose),
-        activationspace = DiscreteSpace{Bool}(tgt_size[1], [false, true]))
-    action_space = NDBox(size(max_velocity), -max_velocity, max_velocity)
-    obs_space = NDBox((nscans,), laser_range[1], laser_range[end])
 
 end
 
 """
 Return the state space for the pomdp
 """
-POMDPs.states(pomdp::SourceSeeker) = pomdp.state_space
+function POMDPs.states(p::SourceSeeker)
+    return StateSpace(
+        mapspace = DiscreteSpace{Bool}(p.map_size, [false, true]),
+        posespace = NDBox(p.pose_size, p.min_pose, p.max_pose),
+        tgtspace = NDBox(p.tgt_size, p.min_pose, p.max_pose),
+        activationspace = DiscreteSpace{Bool}(p.tgt_size[1], [false, true]))
+end
+
+
+function POMDPs.actions(p::SourceSeeker)
+    return NDBox(size(p.max_velocity), -p.max_velocity, p.max_velocity)
+end
+
+
+function POMDPs.observations(p::SourceSeeker)
+    return NDBox((p.nscans,), [p.laser_range[1]], [p.laser_range[end]])
+end
+
 
 """
-Returns a state index
+Should return a distribution over next states?
 """
-#POMDPs.stateindex(pomdp::SourceSeeker, s::State) = firstindex(pomdp.state_space, s)
-
-POMDPs.actions(pomdp::SourceSeeker) = pomdp.action_space
-
-function POMDPs.transition(pomdp::SourceSeeker, s::State, a::Action)
+function _transition(pomdp::SourceSeeker, s::State, a::Action)
     new_pose = s.pose + a
-    if s.map[new_pose] == 1
+    pixelij = pose2pixel(s.map, new_pose)
+    if s.map[pixelij] == 1
         return s
     else
         return State(s.map, new_pose, s.tgts, s.activated)
     end
 end
 
-POMDPs.observations(pomdp::SourceSeeker) = pomdp.obs_space
 
-POMDPs.observation(pomdp::SourceSeeker, a::Action, s::State) = rand(pomdp.obs_space)
+function _observation(pomdp::SourceSeeker, a::Action, s::State)
+    return rand(GLOBAL_RNG, POMDPs.observations(pomdp))
+end
 
-POMDPs.reward(pomdp::SourceSeeker, s::State, a::Action) = rand(Float64)
 
-function POMDPs.initialstate_distribution(pomdp::SourceSeeker)
-    mean_pose = (pomdp.min_pose .+ pomdp.max_pose) ./ 2
+_reward(pomdp::SourceSeeker, s::State, a::Action) = rand(Float64)
+
+
+function POMDPs.initialstate_distribution(p::SourceSeeker)
+    mean_pose = (p.min_pose .+ p.max_pose) ./ 2
     return BeliefDistribution(
-        occupancy=rand(Float64, pomdp.map_size),
+        occupancy=Base.rand(Float64, p.map_size...),
         pose=MvNormal(mean_pose, 1),
-        tgts=[MvNormal(mean_pose[1:tgt_size[end]], 1)
-              for i in 1:tgt_size[1]],
-        activated=ones(tgt_size[1])
+        tgts=[MvNormal(mean_pose[1:p.tgt_size[end]], 1)
+              for i in 1:p.tgt_size[1]],
+        activated=ones(p.tgt_size[1])
     )
+end
+
+function POMDPs.gen(pomdp::SourceSeeker, s::State, a::Action, rng::AbstractRNG)
+    next_state = _transition(pomdp, s, a)
+    obs = _observation(pomdp, a, s)
+    rew = _reward(pomdp, s, a)
+    return (sp=next_state, r=rew, o=obs)
 end
 
 end # module
