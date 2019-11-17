@@ -1,0 +1,8 @@
+name = "POMDPSeeker"
+uuid = "078ec3a0-6e6c-4a05-8f85-0ce12dce04fa"
+authors = ["Vikas Dhiman <wecacuee@users.noreply.github.com>"]
+version = "0.1.0"
+
+[deps]
+POMCPOW = "4c53ee00-974c-466f-8fa5-8dd73959bbab"
+POMDPs = "a93abf59-7444-517b-a68a-c42f96afdd7d"
