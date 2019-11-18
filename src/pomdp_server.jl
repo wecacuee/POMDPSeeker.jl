@@ -3,12 +3,13 @@ using RobotOS
 using POMDPSeeker
 using PyCall
 
+using POMCPOW
 using POMDPSimulators
 using POMDPPolicies
 
 @rosimport nav_msgs.msg: OccupancyGrid
 rostypegen()
-using .nav_msgs.msg
+using Main.nav_msgs.msg: OccupancyGrid
 
 rospy = pyimport("rospy")
 nav_msg = pyimport("nav_msgs.msg")

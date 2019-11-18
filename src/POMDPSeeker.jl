@@ -10,7 +10,8 @@ using RobotOS
 using PyCall: pyimport
 
 @rosimport nav_msgs.msg: OccupancyGrid
-rostypegen()
+rostypegen(POMDPSeeker)
+using .nav_msgs.msg: OccupancyGrid
 
 rospy = pyimport("rospy")
 pynavmsg = pyimport("nav_msgs.msg")
@@ -183,7 +184,8 @@ end
 
 function _reward(pomdp::SourceSeeker, s::State, a::Action)
     msg = rospy.wait_for_message(pomdp.gmapping_map_topic,
-                                 pynavmsg.OccupancyGrid)
+                                 pynavmsg.OccupancyGrid,
+                                 timeout=10)
     occgrid = convert(OccupancyGrid, msg)
 end
 
