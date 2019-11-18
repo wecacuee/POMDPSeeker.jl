@@ -6,6 +6,14 @@ using POMDPs: POMDP, POMDPs
 using Parameters: @with_kw
 using Distributions: MvNormal, Uniform
 using Random: AbstractRNG, GLOBAL_RNG
+using RobotOS
+using PyCall: pyimport
+
+@rosimport nav_msgs.msg: OccupancyGrid
+rostypegen()
+
+rospy = pyimport("rospy")
+pynavmsg = pyimport("nav_msgs.msg")
 
 Map = Array{Float64}
 Pose = Array{Float64}
@@ -128,6 +136,7 @@ Defining POMPD
     max_pose::Vector{Float64} = [100, 100, π]
     nscans::Int64 = 180
     laser_range::Vector{Float64} = [0.05, 80]
+    gmapping_map_topic::String = "/robot0/gmapping_map"
 
 end
 
@@ -172,7 +181,11 @@ function _observation(pomdp::SourceSeeker, a::Action, s::State)
 end
 
 
-_reward(pomdp::SourceSeeker, s::State, a::Action) = rand(Float64)
+function _reward(pomdp::SourceSeeker, s::State, a::Action)
+    msg = rospy.wait_for_message(pomdp.gmapping_map_topic,
+                                 pynavmsg.OccupancyGrid)
+    occgrid = convert(OccupancyGrid, msg)
+end
 
 
 function POMDPs.initialstate_distribution(p::SourceSeeker)
@@ -193,6 +206,8 @@ function POMDPs.gen(pomdp::SourceSeeker, s::State, a::Action, rng::AbstractRNG)
     return (sp=next_state, r=rew, o=obs)
 end
 
-export SourceSeeker
+
+
+export SourceSeeker, runSimulation
 
 end # module

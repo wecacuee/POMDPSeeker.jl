@@ -16,3 +16,4 @@ COPY . $CODE_DIR
 RUN pip3 install --upgrade --no-cache pip && pip install --no-cache -r $CODE_DIR/requirements.txt
 ENV JULIA_PROJECT $CODE_DIR
 WORKDIR $CODE_DIR
+ENTRYPOINT ["/ros_entrypoint.sh"]

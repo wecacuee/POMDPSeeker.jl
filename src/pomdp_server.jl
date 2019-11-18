@@ -3,6 +3,9 @@ using RobotOS
 using POMDPSeeker
 using PyCall
 
+using POMDPSimulators
+using POMDPPolicies
+
 @rosimport nav_msgs.msg: OccupancyGrid
 rostypegen()
 using .nav_msgs.msg
@@ -19,14 +22,23 @@ function callback(msg::OccupancyGrid, lm::Lastmsg)
     lm.msg = msg
 end
 
+function runSimulation()
+    m = SourceSeeker(),
+    solver = POMCPOWSolver(criterion=MaxUCB(20.0))
+    policy = solve(solver, m)
+    for (s, a, r) in stepthrough(m, policy, "s,a,r", max_steps=10)
+        @show s
+        @show a
+        @show r
+        println()
+    end
+    return true
+end
 
 function main()
     init_node("rosjl_pomdp")
-    #lm = Lastmsg(nothing)
-    #sub = Subscriber{OccupancyGrid}(
-    #    "/robot0/gmapping_map", callback, (lm,), queue_size=10)
-    msg = rospy.wait_for_message("/robot0/gmapping_map", nav_msg.OccupancyGrid)
-    occgrid = convert(OccupancyGrid, msg)
+
+    runSimulation()
     @show occgrid
 end
 
