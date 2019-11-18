@@ -13,5 +13,6 @@ ENV HOME /home/root
 ENV CODE_DIR $HOME/wrk/POMDPSeeker.jl
 RUN mkdir -p $CODE_DIR
 COPY . $CODE_DIR
-RUN pip3 install --upgrade --no-cache pip setuptools numpy && pip install --no-cache -r $CODE_DIR/requirements.txt
+RUN pip3 install --upgrade --no-cache pip && pip install --no-cache -r $CODE_DIR/requirements.txt
 ENV JULIA_PROJECT $CODE_DIR
+WORKDIR $CODE_DIR
