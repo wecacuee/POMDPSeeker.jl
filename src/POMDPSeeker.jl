@@ -236,9 +236,6 @@ function _reward(pomdp::SourceSeeker, s::State, a::Action)
         println("sleeping ...")
         rossleep(0.1)
     end
-    io = open( "./pyobject.jlobj"; write=true)
-    serialize(io, wrapped.x)
-    close(io)
     occgrid = convert(Array{Float64}, wrapped.x)
     return _entropy_gain(occgrid, s.map)
 end
