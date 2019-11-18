@@ -193,4 +193,6 @@ function POMDPs.gen(pomdp::SourceSeeker, s::State, a::Action, rng::AbstractRNG)
     return (sp=next_state, r=rew, o=obs)
 end
 
+export SourceSeeker
+
 end # module
