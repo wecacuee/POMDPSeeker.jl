@@ -2,12 +2,16 @@ __precompile__(false)
 module POMDPSeeker
 
 using Base
-using POMDPs: POMDP, POMDPs
-using Parameters: @with_kw
 using Distributions: MvNormal, Uniform
+using POMCPOW
+using POMDPPolicies
+using POMDPSimulators
+using POMDPs: POMDP, POMDPs, simulate
+using Parameters: @with_kw
+using PyCall: pyimport
 using Random: AbstractRNG, GLOBAL_RNG
 using RobotOS
-using PyCall: pyimport
+using Serialization: serialize
 
 @rosimport nav_msgs.msg: OccupancyGrid
 rostypegen(POMDPSeeker)
@@ -138,7 +142,7 @@ Defining POMPD
     nscans::Int64 = 180
     laser_range::Vector{Float64} = [0.05, 80]
     gmapping_map_topic::String = "/robot0/gmapping_map"
-
+    discount::Float64 = 0.9
 end
 
 """
@@ -182,11 +186,61 @@ function _observation(pomdp::SourceSeeker, a::Action, s::State)
 end
 
 
+"""
+Computes H(X) = - ∑ₓ p(x) log(p(x))
+
+This is not entropy in the map space but in the pixel space. We need to have
+samples in the map space to compute it's entropy. The random variable {0, 1}
+occupancy of a pixel. Each pixel is assumed to be a sample from the Binary
+probability distribution. The occupancy value in the map is the probability of pixel being occupied.
+
+We use this as soft measure of unknown space. Equivalent to sum(map == -1)
+"""
+_entropy(map::Array{Float64, 2}) = -sum(map .* log.(map))
+
+
+"""
+Computes H(X') - H(X)
+"""
+function _entropy_gain(map_new::Array{Float64, 2}, map_old::Array{Float64, 2})
+    return _entropy(map_old) - _entropy(map_new) 
+end
+
+"""
+Convert to map
+"""
+function convert(::Type{Array{Float64}}, occgrid::OccupancyGrid)
+    height::Int64 = occgrid.info.height
+    width::Int64 = occgrid.info.width
+    data = transpose(reshape(occgrid.data, width, height))
+    unknown = data .== -1
+    fdata::Array{Float64} = data
+    fdata ./= maximum(fdata)
+    fdata[unknown] .= 0.5
+    return fdata
+end
+
+mutable struct Wrap
+    x
+end
+
+function set_wrapped!(msg, wrap)
+    println("msg received")
+    wrap.x = msg
+end
+
 function _reward(pomdp::SourceSeeker, s::State, a::Action)
-    msg = rospy.wait_for_message(pomdp.gmapping_map_topic,
-                                 pynavmsg.OccupancyGrid,
-                                 timeout=10)
-    occgrid = convert(OccupancyGrid, msg)
+    wrapped = Wrap(nothing)
+    Subscriber{OccupancyGrid}(pomdp.gmapping_map_topic, set_wrapped!, (wrapped,))
+    while wrapped.x == nothing
+        println("sleeping ...")
+        rossleep(0.1)
+    end
+    io = open( "./pyobject.jlobj"; write=true)
+    serialize(io, wrapped.x)
+    close(io)
+    occgrid = convert(Array{Float64}, wrapped.x)
+    return _entropy_gain(occgrid, s.map)
 end
 
 
@@ -206,6 +260,34 @@ function POMDPs.gen(pomdp::SourceSeeker, s::State, a::Action, rng::AbstractRNG)
     obs = _observation(pomdp, a, s)
     rew = _reward(pomdp, s, a)
     return (sp=next_state, r=rew, o=obs)
+end
+
+POMDPs.discount(p::SourceSeeker) = p.discount
+
+function runSimulation()
+    pomdp = SourceSeeker()
+
+    hr = HistoryRecorder(max_steps=10)
+    rhist = simulate(hr, pomdp, RandomPolicy(pomdp))
+    println("""
+        Cumulative Discounted Reward (for 1 simulation)
+            Random: $(discounted_reward(rhist))""")
+
+    solver = POMCPOWSolver(criterion=MaxUCB(20.0))
+    policy = solve(solver, pomdp)
+    hist = simulate(hr, pomdp, policy)
+    for (s, b, a, r, sp, o) in hist
+        @show s
+        @show a
+        @show r
+        println()
+    end
+    println("""
+        Cumulative Discounted Reward (for 1 simulation)
+            Random: $(discounted_reward(rhist))
+            POMCPOW: $(discounted_reward(hist))
+        """)
+    return true
 end
 
 
