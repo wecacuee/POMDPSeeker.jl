@@ -1,0 +1,39 @@
+version: "2.4"
+services:
+  core:
+    image: pomdpseeker.jl
+    command: ["roscore"]
+    network_mode: host
+    
+  pomdp:
+    build:
+      context: .
+    image: pomdpseeker.jl
+    environment:
+      - JULIA_PROJECT=$PWD
+      - HOME=$HOME
+      - DISPLAY
+      - TERM
+    entrypoint: ["/ros_entrypoint.sh"]
+    working_dir: $PWD
+    command: ["env", "JULIA_PROJECT=$PWD", "julia", "$PWD/src/pomdp_server.jl"]
+    #command: ["env", "JULIA_PROJECT=$PWD", "python3", "-c", "import nav_msgs.msg"]
+    network_mode: host
+    volumes:
+      - $HOME:$HOME
+      - /tmp/.X11-unix:/tmp/.X11-unix
+    runtime: nvidia
+
+    #depends_on: [core]
+
+  rosbag:
+    image: pomdpseeker.jl
+    command: ["rosbag", "play", "/home/vdhiman/aux/generative_inpainting/data/radish/maps_pgm/department_diiga__2019-11-13-01-05-46.bag"]
+    network_mode: host
+    volumes:
+      - $HOME:$HOME
+      - /tmp/.X11-unix:/tmp/.X11-unix
+    runtime: nvidia
+    depends_on: [core]
+
+

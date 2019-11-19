@@ -12,6 +12,7 @@ using PyCall: pyimport
 using Random: AbstractRNG, GLOBAL_RNG
 using RobotOS
 using Serialization: serialize
+using PyCall
 
 @rosimport nav_msgs.msg: OccupancyGrid
 rostypegen(POMDPSeeker)
@@ -209,7 +210,7 @@ end
 """
 Convert to map
 """
-function convert(::Type{Array{Float64}}, occgrid::OccupancyGrid)
+function convert_occgrid(occgrid::OccupancyGrid)
     height::Int64 = occgrid.info.height
     width::Int64 = occgrid.info.width
     data = transpose(reshape(occgrid.data, width, height))
@@ -217,7 +218,18 @@ function convert(::Type{Array{Float64}}, occgrid::OccupancyGrid)
     fdata::Array{Float64} = data
     fdata ./= maximum(fdata)
     fdata[unknown] .= 0.5
-    return fdata
+    return fdata, unknown
+end
+
+function predict_nextmap(fmap::Array{Float64}, unknown::Array{Bool})
+    gipt = pyimport("generative_inpainting.test")
+    fipt = gipt.FillInpainting()
+    image = UInt8.(round.(fmap * 255))
+    image_3c = repeat(reshape(image, 1, size(image)...), outer=(3, 1, 1))
+    unknown = UInt8.(unknown) * UInt8(255)
+    unknown_3c = repeat(reshape(unknown, 1, size(unknown)...), outer=(3, 1, 1))
+    predicted = fipt.predict(PyReverseDims(image_3c), PyReverseDims(unknown_3c))
+    return predicted
 end
 
 mutable struct Wrap
@@ -236,7 +248,7 @@ function _reward(pomdp::SourceSeeker, s::State, a::Action)
         println("sleeping ...")
         rossleep(0.1)
     end
-    occgrid = convert(Array{Float64}, wrapped.x)
+    occgrid = convert_occgrid(Array{Float64}, wrapped.x)
     return _entropy_gain(occgrid, s.map)
 end
 

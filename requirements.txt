@@ -1,0 +1,5 @@
+catkin-tools
+rospkg
+git+https://github.com/wecacuee/generative_inpainting
+setuptools
+numpy
