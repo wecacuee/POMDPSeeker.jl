@@ -16,7 +16,8 @@ services:
       - TERM
     entrypoint: ["/ros_entrypoint.sh"]
     working_dir: $PWD
-    command: ["env", "JULIA_PROJECT=$PWD", "julia", "$PWD/src/pomdp_server.jl"]
+    command: ["env", "JULIA_PROJECT=$PWD", "bash", "-c",
+    "pip3 install -e ../generative_inpainting && julia $PWD/src/pomdp_server.jl"]
     #command: ["env", "JULIA_PROJECT=$PWD", "python3", "-c", "import nav_msgs.msg"]
     network_mode: host
     volumes:

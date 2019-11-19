@@ -1,4 +1,4 @@
-FROM ros:melodic-perception-bionic
+FROM ros-melodic-bionic-nvidia
 
 ENV JULIA_VERSION 1.0.5
 RUN apt-get update && \

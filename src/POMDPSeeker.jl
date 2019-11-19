@@ -213,7 +213,8 @@ Convert to map
 function convert_occgrid(occgrid::OccupancyGrid)
     height::Int64 = occgrid.info.height
     width::Int64 = occgrid.info.width
-    data = transpose(reshape(occgrid.data, width, height))
+    #data = transpose()
+    data = reshape(occgrid.data, width, height)
     unknown = data .== -1
     fdata::Array{Float64} = data
     fdata ./= maximum(fdata)
@@ -221,14 +222,14 @@ function convert_occgrid(occgrid::OccupancyGrid)
     return fdata, unknown
 end
 
-function predict_nextmap(fmap::Array{Float64}, unknown::Array{Bool})
+function predict_nextmap(fmap::Array{Float64}, unknown::AbstractArray{Bool})
     gipt = pyimport("generative_inpainting.test")
-    fipt = gipt.FillInpainting()
+    fipt = gipt.GLOBAL_FILL_INPAINTING
     image = UInt8.(round.(fmap * 255))
-    image_3c = repeat(reshape(image, 1, size(image)...), outer=(3, 1, 1))
+    image_3c = repeat(reshape(image, size(image)..., 1), outer=(1, 1, 3))
     unknown = UInt8.(unknown) * UInt8(255)
-    unknown_3c = repeat(reshape(unknown, 1, size(unknown)...), outer=(3, 1, 1))
-    predicted = fipt.predict(PyReverseDims(image_3c), PyReverseDims(unknown_3c))
+    unknown_3c = repeat(reshape(unknown, size(unknown)..., 1), outer=(1, 1, 3))
+    predicted = fipt.predict(image_3c, unknown_3c)
     return predicted
 end
 
@@ -248,7 +249,8 @@ function _reward(pomdp::SourceSeeker, s::State, a::Action)
         println("sleeping ...")
         rossleep(0.1)
     end
-    occgrid = convert_occgrid(Array{Float64}, wrapped.x)
+    occgrid, unknown = convert_occgrid(wrapped.x)
+    predicted = predict_nextmap(occgrid, unknown)
     return _entropy_gain(occgrid, s.map)
 end
 
