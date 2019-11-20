@@ -21,15 +21,18 @@ using .nav_msgs.msg: OccupancyGrid
 rospy = pyimport("rospy")
 pynavmsg = pyimport("nav_msgs.msg")
 
-Map = Array{Float64}
+@with_kw struct Map
+    grid::Array{Float64}
+    res::Float64
+end
 Pose = Array{Float64}
 
 function pose2pixel(
     map::Map,
     pose::Pose;
-    origin_px::Array{Int64, 1} = round.(Int64, [size(map)...] / 2)
+    origin_px::Array{Int64, 1} = round.(Int64, [size(map.grid)...] / 2)
 )
-    pixelji = round.(Int64, pose[1:2])
+    pixelji = round.(Int64, pose[1:2] / map.resolution)
     return [pixelji[end], pixelji[1]] + origin_px
 end
 
@@ -143,6 +146,7 @@ Defining POMPD
     nscans::Int64 = 180
     laser_range::Vector{Float64} = [0.05, 80]
     gmapping_map_topic::String = "/robot0/gmapping_map"
+    sim_map_publish::String = "/robot0/true_map_for_sim"
     discount::Float64 = 0.9
 end
 
@@ -219,8 +223,9 @@ function convert_occgrid(occgrid::OccupancyGrid)
     fdata::Array{Float64} = data
     fdata ./= maximum(fdata)
     fdata[unknown] .= 0.5
-    return fdata, unknown
+    return Map(grid=fdata, res=occgrid.info.resolution), unknown
 end
+
 
 function predict_nextmap(fmap::Array{Float64}, unknown::AbstractArray{Bool})
     gipt = pyimport("generative_inpainting.test")
@@ -233,9 +238,11 @@ function predict_nextmap(fmap::Array{Float64}, unknown::AbstractArray{Bool})
     return predicted
 end
 
+
 mutable struct Wrap
     x
 end
+
 
 function set_wrapped!(msg, wrap)
     println("msg received")
@@ -243,15 +250,6 @@ function set_wrapped!(msg, wrap)
 end
 
 function _reward(pomdp::SourceSeeker, s::State, a::Action)
-    wrapped = Wrap(nothing)
-    Subscriber{OccupancyGrid}(pomdp.gmapping_map_topic, set_wrapped!, (wrapped,))
-    while wrapped.x == nothing
-        println("sleeping ...")
-        rossleep(0.1)
-    end
-    occgrid, unknown = convert_occgrid(wrapped.x)
-    predicted = predict_nextmap(occgrid, unknown)
-    return _entropy_gain(occgrid, s.map)
 end
 
 
@@ -266,14 +264,41 @@ function POMDPs.initialstate_distribution(p::SourceSeeker)
     )
 end
 
+
+function convert_to_occgrid(map::Map, unknown::AbstractArray{Bool}, resolution::Float64 = 0.05)
+    occgrid = OccupancyGrid()
+    #occgrid.header.stamp = get_rostime()
+    occgrid.info.height, occgrid.info.width = UInt32.(size(map.grid))
+    occgrid.info.resolution = map.res
+    map_i8 = Int8.(round.(map.grid * 100))
+    map_i8[unknown] .= -1
+    occgrid.data = vcat(map_i8...)
+    return occgrid
+end
+
+
 function POMDPs.gen(pomdp::SourceSeeker, s::State, a::Action, rng::AbstractRNG)
-    next_state = _transition(pomdp, s, a)
-    obs = _observation(pomdp, a, s)
-    rew = _reward(pomdp, s, a)
+    # 1. Publish predicted map and action
+    pub = Publisher{OccupancyGrid}(pomdp.sim_map_publish)
+    predicted = predict_nextmap(occgrid, unknown)
+    pub.publish(convert_to_occgrid(predicted))
+
+    # 2. Subscribe to observation, generated map and action
+    wrapped = Wrap(nothing)
+    Subscriber{OccupancyGrid}(pomdp.gmapping_map_topic, set_wrapped!, (wrapped,))
+    while wrapped.x == nothing
+        println("sleeping ...")
+        rossleep(0.1)
+    end
+    occgrid, unknown = convert_occgrid(wrapped.x)
+    # 3. Compute the information gain if this action was taken
+    rew = _entropy_gain(occgrid, s.map.grid)
     return (sp=next_state, r=rew, o=obs)
 end
 
+
 POMDPs.discount(p::SourceSeeker) = p.discount
+
 
 function runSimulation()
     pomdp = SourceSeeker()
@@ -301,6 +326,13 @@ function runSimulation()
     return true
 end
 
+
+function plan_next_best_action(b::BeliefDistribution)
+    pomdp = SourceSeeker()
+    solver = POMCPOWSolver(criterion=MaxUCB(20.0))
+    policy = solve(solver, pomdp)
+    return policy(b)
+end
 
 
 export SourceSeeker, runSimulation
